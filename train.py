@@ -4,30 +4,46 @@
 
 import argparse
 import os
+
+import cv2
 import tensorflow as tf
+from keras_applications import resnet
+from tensorflow.contrib.slim.python.slim.nets.resnet_v2 import resnet_v2_50, resnet_v2_block, resnet_v2
 from tensorpack.utils import logger
 from tensorpack import *
 from tensorpack.dataflow import dataset
 from tensorpack.tfutils.summary import add_moving_summary, add_param_summary
 from tensorpack.utils.gpu import get_num_gpu
 
-"""
-CIFAR10 ResNet example. See:
-Deep Residual Learning for Image Recognition, arxiv:1512.03385
-This implementation uses the variants proposed in:
-Identity Mappings in Deep Residual Networks, arxiv:1603.05027
-I can reproduce the results on 2 TitanX for
-n=5, about 7.1% val error after 67k steps (20.4 step/s)
-n=18, about 5.95% val error after 80k steps (5.6 step/s, not converged)
-n=30: a 182-layer network, about 5.6% val error after 51k steps (3.4 step/s)
-This model uses the whole training set instead of a train-val split.
-To train:
-    ./cifar10-resnet.py --gpu 0,1
-"""
+from dataset import MPIIFaceGaze
 
-BATCH_SIZE = 128
+BATCH_SIZE = 2
 NUM_UNITS = None
 
+def resnet_v2_mini(inputs,
+                 num_classes=None,
+                 is_training=True,
+                 global_pool=True,
+                 output_stride=None,
+                 reuse=None,
+                 scope='resnet_v2_50'):
+  """ResNet-50 model of [1]. See resnet_v2() for arg and return description."""
+  blocks = [
+      resnet_v2_block('block1', base_depth=16, num_units=3, stride=2),
+      resnet_v2_block('block2', base_depth=32, num_units=2, stride=2),
+      resnet_v2_block('block3', base_depth=32, num_units=2, stride=2),
+      resnet_v2_block('block4', base_depth=64, num_units=3, stride=1),
+  ]
+  return resnet_v2(
+      inputs,
+      blocks,
+      num_classes,
+      is_training,
+      global_pool,
+      output_stride,
+      include_root_block=True,
+      reuse=reuse,
+      scope=scope)
 
 class Model(ModelDesc):
 
@@ -36,66 +52,13 @@ class Model(ModelDesc):
         self.n = n
 
     def inputs(self):
-        return [tf.TensorSpec([None, 32, 32, 3], tf.float32, 'input'),
-                tf.TensorSpec([None], tf.int32, 'label')]
+        return [tf.placeholder(tf.float32, [None, 112, 112, 3], 'input'),
+                tf.placeholder(tf.float32, [None, 2], 'label')]
 
     def build_graph(self, image, label):
-        image = image / 128.0
-        assert tf.test.is_gpu_available()
-        image = tf.transpose(image, [0, 3, 1, 2])
+        net, end_points = resnet_v2_mini(image, num_classes=2, is_training=get_current_tower_context().is_training)
 
-        def residual(name, l, increase_dim=False, first=False):
-            shape = l.get_shape().as_list()
-            in_channel = shape[1]
-
-            if increase_dim:
-                out_channel = in_channel * 2
-                stride1 = 2
-            else:
-                out_channel = in_channel
-                stride1 = 1
-
-            with tf.variable_scope(name):
-                b1 = l if first else BNReLU(l)
-                c1 = Conv2D('conv1', b1, out_channel, strides=stride1, activation=BNReLU)
-                c2 = Conv2D('conv2', c1, out_channel)
-                if increase_dim:
-                    l = AvgPooling('pool', l, 2)
-                    l = tf.pad(l, [[0, 0], [in_channel // 2, in_channel // 2], [0, 0], [0, 0]])
-
-                l = c2 + l
-                return l
-
-        with argscope([Conv2D, AvgPooling, BatchNorm, GlobalAvgPooling], data_format='channels_first'), \
-                argscope(Conv2D, use_bias=False, kernel_size=3,
-                         kernel_initializer=tf.variance_scaling_initializer(scale=2.0, mode='fan_out')):
-            l = Conv2D('conv0', image, 16, activation=BNReLU)
-            l = residual('res1.0', l, first=True)
-            for k in range(1, self.n):
-                l = residual('res1.{}'.format(k), l)
-            # 32,c=16
-
-            l = residual('res2.0', l, increase_dim=True)
-            for k in range(1, self.n):
-                l = residual('res2.{}'.format(k), l)
-            # 16,c=32
-
-            l = residual('res3.0', l, increase_dim=True)
-            for k in range(1, self.n):
-                l = residual('res3.' + str(k), l)
-            l = BNReLU('bnlast', l)
-            # 8,c=64
-            l = GlobalAvgPooling('gap', l)
-
-        logits = FullyConnected('linear', l, 10)
-        tf.nn.softmax(logits, name='output')
-
-        cost = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=logits, labels=label)
-        cost = tf.reduce_mean(cost, name='cross_entropy_loss')
-
-        wrong = tf.cast(tf.logical_not(tf.nn.in_top_k(logits, label, 1)), tf.float32, name='wrong_vector')
-        # monitor training error
-        add_moving_summary(tf.reduce_mean(wrong, name='train_error'))
+        cost = tf.reduce_mean(tf.abs(net - label), name="total_loss")
 
         # weight decay on all W of fc layers
         wd_w = tf.train.exponential_decay(0.0002, get_global_step_var(),
@@ -103,34 +66,41 @@ class Model(ModelDesc):
         wd_cost = tf.multiply(wd_w, regularize_cost('.*/W', tf.nn.l2_loss), name='wd_cost')
         add_moving_summary(cost, wd_cost)
 
-        add_param_summary(('.*/W', ['histogram']))   # monitor W
+        add_param_summary(('.*/W', ['histogram']))  # monitor W
         return tf.add_n([cost, wd_cost], name='cost')
 
     def optimizer(self):
-        lr = tf.get_variable('learning_rate', initializer=0.01, trainable=False)
+        lr = tf.get_variable('learning_rate', initializer=0.001, trainable=False)
         opt = tf.train.MomentumOptimizer(lr, 0.9)
         return opt
 
 
-def get_data(train_or_test):
-    isTrain = train_or_test == 'train'
-    ds = dataset.Cifar10(train_or_test)
-    pp_mean = ds.get_per_pixel_mean(('train',))
-    if isTrain:
+def get_data(is_train):
+    ds = MPIIFaceGaze(dir="C:/Users/Guo/Documents/MPIIFaceGaze_normalizad/", is_train=is_train)
+
+    def mapf(ds):
+        data, label = ds
+        data = data.transpose((1, 2, 0))
+        data = cv2.resize(data, (112, 112))
+        return data, label[0:2]
+
+    if is_train:
         augmentors = [
-            imgaug.CenterPaste((40, 40)),
-            imgaug.RandomCrop((32, 32)),
-            imgaug.Flip(horiz=True),
-            imgaug.MapImage(lambda x: x - pp_mean),
+            # imgaug.Resize(112)
+            # imgaug.CenterPaste((40, 40)),
+            # imgaug.RandomCrop((32, 32)),
+            # imgaug.Flip(horiz=True),
+            # imgaug.MapImage(lambda x: x - pp_mean),
         ]
     else:
         augmentors = [
-            imgaug.MapImage(lambda x: x - pp_mean)
+            # imgaug.Resize(112)
+            # imgaug.MapImage(lambda x: x - pp_mean)
         ]
     ds = AugmentImageComponent(ds, augmentors)
-    ds = BatchData(ds, BATCH_SIZE, remainder=not isTrain)
-    if isTrain:
-        ds = MultiProcessRunner(ds, 3, 2)
+    ds = MultiThreadMapData(ds, 2, map_func=mapf)
+    ds = BatchData(ds, BATCH_SIZE, remainder=not is_train)
+
     return ds
 
 
@@ -149,8 +119,8 @@ if __name__ == '__main__':
 
     logger.auto_set_dir()
 
-    dataset_train = get_data('train')
-    dataset_test = get_data('test')
+    dataset_train = get_data(is_train=True)
+    dataset_test = get_data(is_train=False)
 
     config = TrainConfig(
         model=Model(n=NUM_UNITS),
@@ -158,12 +128,12 @@ if __name__ == '__main__':
         callbacks=[
             ModelSaver(),
             InferenceRunner(dataset_test,
-                            [ScalarStats('cost'), ClassificationError('wrong_vector')]),
+                            [ScalarStats('total_loss')]),
             ScheduledHyperParamSetter('learning_rate',
                                       [(1, 0.1), (82, 0.01), (123, 0.001), (300, 0.0002)])
         ],
         max_epoch=400,
         session_init=SmartInit(args.load),
     )
-    num_gpu = max(get_num_gpu(), 1)
-    launch_train_with_config(config, SyncMultiGPUTrainerParameterServer(num_gpu))
+    # num_gpu = max(get_num_gpu(), 1)
+    launch_train_with_config(config, SyncMultiGPUTrainerParameterServer(1))

@@ -4,15 +4,19 @@ from scipy.io import loadmat
 
 import h5py
 import numpy as np
-from tensorpack import RNGDataFlow, MultiThreadMapData
+from tensorpack import RNGDataFlow
 import cv2
 
 
 class MPIIFaceGaze(RNGDataFlow):
-    def __init__(self, dir="C:/Users/Guo/Documents/MPIIFaceGaze_normalizad/",data_txt="data.txt", is_train=True):
+    def __init__(self, dir="C:/Users/Guo/Documents/MPIIFaceGaze_normalizad/", is_train=True):
         self.dir = dir
         self.shuffle = is_train
-        self.all_data = self._parse_txt(data_txt)
+        if is_train:
+            self.mat_id = ["00", "01", "02", "03", "04", "05", "06", "07", "08", "09", "10"]
+        else:
+            self.mat_id = ["11", "12", "13", "14"]
+        self.all_data, self.all_label = self._load_all_mat()
         print("Dataset samples :", len(self.all_data))
 
     def __len__(self):
@@ -23,7 +27,7 @@ class MPIIFaceGaze(RNGDataFlow):
         if self.shuffle:
             self.rng.shuffle(idxs)
         for k in idxs:
-            yield self.all_data[k]
+            yield self.all_data[k], self.all_label[k]
 
     def _load_all_mat(self):
         all_data = []
@@ -50,24 +54,12 @@ class MPIIFaceGaze(RNGDataFlow):
 
         return all_data, all_label
 
-    @staticmethod
-    def _mapf(ds):
-        npz_full_path = ds
-        img, label = np.load(npz_full_path)
-        img = cv2.resize(img, (112, 112))
-        return img, label[0:2]
 
-    def _parse_txt(self,txt_path):
-        with open(txt_path) as f:
-            data = f.readlines()
-        return [os.path.join(self.dir,d.rstrip("\n")) for d in data]
 if __name__ == '__main__':
     ds = MPIIFaceGaze(dir="C:/Users/Guo/Documents/MPIIFaceGaze_normalizad/", is_train=False)
-    # ds = MultiThreadMapData(ds, 2, map_func=MPIIFaceGaze._mapf)
     gaze_line_len = 200
     pose_line_len = 200
-    for d in ds:
-        data,label = MPIIFaceGaze._mapf(d)
+    for data, label in ds:
         img_show = data.transpose((1, 2, 0)).astype(np.uint8)
         label = label
         # draw 6 face keypoints

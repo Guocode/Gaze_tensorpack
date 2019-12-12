@@ -17,7 +17,7 @@ from tensorpack.utils.gpu import get_num_gpu
 
 from dataset import MPIIFaceGaze
 
-BATCH_SIZE = 2
+BATCH_SIZE = 16
 NUM_UNITS = None
 
 def resnet_v2_mini(inputs,
@@ -29,10 +29,10 @@ def resnet_v2_mini(inputs,
                  scope='resnet_v2_50'):
   """ResNet-50 model of [1]. See resnet_v2() for arg and return description."""
   blocks = [
-      resnet_v2_block('block1', base_depth=16, num_units=3, stride=2),
+      resnet_v2_block('block1', base_depth=16, num_units=2, stride=2),
       resnet_v2_block('block2', base_depth=32, num_units=2, stride=2),
       resnet_v2_block('block3', base_depth=32, num_units=2, stride=2),
-      resnet_v2_block('block4', base_depth=64, num_units=3, stride=1),
+      resnet_v2_block('block4', base_depth=64, num_units=2, stride=1),
   ]
   return resnet_v2(
       inputs,
@@ -76,13 +76,8 @@ class Model(ModelDesc):
 
 
 def get_data(is_train):
-    ds = MPIIFaceGaze(dir="C:/Users/Guo/Documents/MPIIFaceGaze_normalizad/", is_train=is_train)
+    ds = MPIIFaceGaze(dir="C:/Users/Guo/Documents/MPIIFaceGaze_normalizad/",data_txt="data.txt", is_train=is_train)
 
-    def mapf(ds):
-        data, label = ds
-        data = data.transpose((1, 2, 0))
-        data = cv2.resize(data, (112, 112))
-        return data, label[0:2]
 
     if is_train:
         augmentors = [
@@ -98,7 +93,7 @@ def get_data(is_train):
             # imgaug.MapImage(lambda x: x - pp_mean)
         ]
     ds = AugmentImageComponent(ds, augmentors)
-    ds = MultiThreadMapData(ds, 2, map_func=mapf)
+    ds = MultiThreadMapData(ds, 2, map_func=MPIIFaceGaze._mapf)
     ds = BatchData(ds, BATCH_SIZE, remainder=not is_train)
 
     return ds

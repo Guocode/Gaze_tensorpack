@@ -10,7 +10,7 @@ def mat2npz():
 if __name__ == '__main__':
     f = open('data.txt', 'w')  # 设置文件对象
 
-    for pid in range(1,15):
+    for pid in range(0,15):
         mat = "C:/Users/Guo/Documents/MPIIFaceGaze_normalizad/p{:0>2d}.mat".format(pid)
         m = h5py.File(mat)
         Data = m['Data']
@@ -26,13 +26,9 @@ if __name__ == '__main__':
         if not os.path.exists("C:/Users/Guo/Documents/MPIIFaceGaze_normalizad/p{:0>2d}".format(pid)):
             os.mkdir("C:/Users/Guo/Documents/MPIIFaceGaze_normalizad/p{:0>2d}".format(pid))
         for i in range(data.shape[0]):
-            # np.savez_compressed('C:/Users/Guo/Documents/MPIIFaceGaze_normalizad/p{:0>2d}/p{:0>2d}_{:0>4d}.npz'.format(pid,pid,i), data=data[i,...], label=label[i,...])
-            img = data[i,...].transpose((1,2,0))
             img_save_name = 'C:/Users/Guo/Documents/MPIIFaceGaze_normalizad/p{:0>2d}/p{:0>2d}_{:0>4d}.jpg'.format(pid, pid, i)
-            cv2.imwrite(img_save_name,img)
-            np.savez_compressed(img_save_name[:-3]+"npz",label[i, ...])
+            # cv2.imwrite(img_save_name,data[i,...].transpose((1,2,0)))
+            # np.savez_compressed(img_save_name[:-3]+"npz",label[i, ...])
             f.write("p{:0>2d}/p{:0>2d}_{:0>4d}.jpg\n".format(pid,pid,i))  # 将字符串写入文件中
             print(pid,i)
-        # mat2npz()
-        # exit()
     f.close()

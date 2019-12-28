@@ -51,7 +51,11 @@ class Model(ModelDesc):
 
 
 def get_data(is_train):
-    ds = MPIIFaceGaze(dir="C:/Users/Guo/Documents/MPIIFaceGaze_normalizad/",data_txt="data.txt", is_train=is_train)
+    if is_train:
+        data_txt = "train_data.txt"
+    else:
+        data_txt = "val_data.txt"
+    ds = MPIIFaceGaze(dir="C:/Users/Guo/Documents/MPIIFaceGaze_normalizad/",data_txt=data_txt, is_train=is_train)
     if is_train:
         augmentors = [
             # imgaug.Resize(112)

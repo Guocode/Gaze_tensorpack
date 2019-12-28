@@ -7,8 +7,7 @@ import os
 
 import cv2
 import tensorflow as tf
-from keras_applications import resnet
-from tensorflow.contrib.slim.python.slim.nets.resnet_v2 import resnet_v2_50, resnet_v2_block, resnet_v2
+from mmdnn.conversion.examples.tensorflow.models.mobilenet.mobilenet_v2 import mobilenet
 from tensorpack.utils import logger
 from tensorpack import *
 from tensorpack.dataflow import dataset
@@ -17,33 +16,8 @@ from tensorpack.utils.gpu import get_num_gpu
 
 from dataset import MPIIFaceGaze
 
-BATCH_SIZE = 16
+BATCH_SIZE = 8
 NUM_UNITS = None
-
-def resnet_v2_mini(inputs,
-                 num_classes=None,
-                 is_training=True,
-                 global_pool=True,
-                 output_stride=None,
-                 reuse=None,
-                 scope='resnet_v2_50'):
-  """ResNet-50 model of [1]. See resnet_v2() for arg and return description."""
-  blocks = [
-      resnet_v2_block('block1', base_depth=16, num_units=2, stride=2),
-      resnet_v2_block('block2', base_depth=32, num_units=2, stride=2),
-      resnet_v2_block('block3', base_depth=32, num_units=2, stride=2),
-      resnet_v2_block('block4', base_depth=64, num_units=2, stride=1),
-  ]
-  return resnet_v2(
-      inputs,
-      blocks,
-      num_classes,
-      is_training,
-      global_pool,
-      output_stride,
-      include_root_block=True,
-      reuse=reuse,
-      scope=scope)
 
 class Model(ModelDesc):
 
@@ -56,7 +30,7 @@ class Model(ModelDesc):
                 tf.placeholder(tf.float32, [None, 2], 'label')]
 
     def build_graph(self, image, label):
-        net, end_points = resnet_v2_mini(image, num_classes=2, is_training=get_current_tower_context().is_training)
+        net, end_points = mobilenet(image,depth_multiplier=0.25,num_classes=2,is_training=get_current_tower_context().is_training)
 
         cost = tf.reduce_mean(tf.abs(net - label), name="total_loss")
 
@@ -66,19 +40,18 @@ class Model(ModelDesc):
         wd_cost = tf.multiply(wd_w, regularize_cost('.*/W', tf.nn.l2_loss), name='wd_cost')
         add_moving_summary(cost, wd_cost)
 
-        add_param_summary(('.*/W', ['histogram']))  # monitor W
+        # add_param_summary(('.*/W', ['histogram']))  # monitor W
         return tf.add_n([cost, wd_cost], name='cost')
 
     def optimizer(self):
         lr = tf.get_variable('learning_rate', initializer=0.001, trainable=False)
-        opt = tf.train.MomentumOptimizer(lr, 0.9)
+        # opt = tf.train.MomentumOptimizer(lr, 0.9)
+        opt = tf.train.AdamOptimizer(lr)
         return opt
 
 
 def get_data(is_train):
     ds = MPIIFaceGaze(dir="C:/Users/Guo/Documents/MPIIFaceGaze_normalizad/",data_txt="data.txt", is_train=is_train)
-
-
     if is_train:
         augmentors = [
             # imgaug.Resize(112)
@@ -92,8 +65,8 @@ def get_data(is_train):
             # imgaug.Resize(112)
             # imgaug.MapImage(lambda x: x - pp_mean)
         ]
-    ds = AugmentImageComponent(ds, augmentors)
-    ds = MultiThreadMapData(ds, 2, map_func=MPIIFaceGaze._mapf)
+    # ds = AugmentImageComponent(ds, augmentors)
+    ds = MultiThreadMapData(ds, 1, map_func=MPIIFaceGaze._mapf)
     ds = BatchData(ds, BATCH_SIZE, remainder=not is_train)
 
     return ds

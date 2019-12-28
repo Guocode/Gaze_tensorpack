@@ -1,5 +1,6 @@
 import os
 
+import jpeg4py
 from scipy.io import loadmat
 
 import h5py
@@ -25,37 +26,15 @@ class MPIIFaceGaze(RNGDataFlow):
         for k in idxs:
             yield self.all_data[k]
 
-    def _load_all_mat(self):
-        all_data = []
-        all_label = []
-        for i in self.mat_id:
-            mat_full_path = os.path.join(self.dir, "p{}.mat".format(i))
-            m = h5py.File(mat_full_path)
-            Data = m['Data']
-            data = Data['data']
-            label = Data['label']
-            # par_a_h = Data['par_a_h']
-            # par_a_w = Data['par_a_w']
-            # par_b_h = Data['par_b_h']
-            # par_b_w = Data['par_b_w']
-            # screenPattern = Data['screenPattern']
-            # screen_height = Data['screen_height']
-            # screen_width = Data['screen_width']
-            data_np = data[:10]
-            label_np = label[:10]
-            all_data.append(data_np)
-            all_label.append(label_np)
-        all_data = np.concatenate(all_data, axis=0)
-        all_label = np.concatenate(all_label, axis=0)
-
-        return all_data, all_label
-
     @staticmethod
     def _mapf(ds):
-        npz_full_path = ds
-        img, label = np.load(npz_full_path)
+        img_full_path = ds
+        label_full_path = img_full_path[:-3]+"npz"
+        # img = jpeg4py.JPEG(img_full_path).decode()
+        img = cv2.imread(img_full_path)
         img = cv2.resize(img, (112, 112))
-        return img, label[0:2]
+        label = np.load(label_full_path)
+        return img, label['arr_0'][0:2]
 
     def _parse_txt(self,txt_path):
         with open(txt_path) as f:

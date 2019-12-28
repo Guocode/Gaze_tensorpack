@@ -21,9 +21,9 @@ NUM_UNITS = None
 
 class Model(ModelDesc):
 
-    def __init__(self, n):
+    def __init__(self, ):
         super(Model, self).__init__()
-        self.n = n
+        # self.n = n
 
     def inputs(self):
         return [tf.placeholder(tf.float32, [None, 112, 112, 3], 'input'),
@@ -32,16 +32,16 @@ class Model(ModelDesc):
     def build_graph(self, image, label):
         net, end_points = mobilenet(image,depth_multiplier=0.25,num_classes=2,is_training=get_current_tower_context().is_training)
 
-        cost = tf.reduce_mean(tf.abs(net - label), name="total_loss")
-
+        cost = tf.losses.mean_squared_error(label,net)#tf.reduce_mean(tf.abs(net - label), name="total_loss")
+        return tf.add_n([cost], name='total_loss')
         # weight decay on all W of fc layers
-        wd_w = tf.train.exponential_decay(0.0002, get_global_step_var(),
-                                          480000, 0.2, True)
-        wd_cost = tf.multiply(wd_w, regularize_cost('.*/W', tf.nn.l2_loss), name='wd_cost')
-        add_moving_summary(cost, wd_cost)
+        # wd_w = tf.train.exponential_decay(0.0002, get_global_step_var(),
+        #                                   480000, 0.2, True)
+        # wd_cost = tf.multiply(wd_w, regularize_cost('.*/W', tf.nn.l2_loss), name='wd_cost')
+        # add_moving_summary(cost, wd_cost)
 
         # add_param_summary(('.*/W', ['histogram']))  # monitor W
-        return tf.add_n([cost, wd_cost], name='cost')
+        # return tf.add_n([cost, wd_cost], name='cost')
 
     def optimizer(self):
         lr = tf.get_variable('learning_rate', initializer=0.001, trainable=False)
@@ -91,17 +91,18 @@ if __name__ == '__main__':
     dataset_test = get_data(is_train=False)
 
     config = TrainConfig(
-        model=Model(n=NUM_UNITS),
+        model=Model(),
         dataflow=dataset_train,
         callbacks=[
             ModelSaver(),
             InferenceRunner(dataset_test,
                             [ScalarStats('total_loss')]),
-            ScheduledHyperParamSetter('learning_rate',
-                                      [(1, 0.1), (82, 0.01), (123, 0.001), (300, 0.0002)])
+            # ScheduledHyperParamSetter('learning_rate',
+            #                           [(1, 0.1), (82, 0.01), (123, 0.001), (300, 0.0002)])
         ],
         max_epoch=400,
-        session_init=SmartInit(args.load),
+        # session_init=SmartInit(args.load),
     )
     # num_gpu = max(get_num_gpu(), 1)
-    launch_train_with_config(config, SyncMultiGPUTrainerParameterServer(1))
+    # launch_train_with_config(config, SyncMultiGPUTrainerParameterServer(1))
+    launch_train_with_config(config, SimpleTrainer())
